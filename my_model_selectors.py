@@ -7,7 +7,6 @@ from hmmlearn.hmm import GaussianHMM
 from sklearn.model_selection import KFold
 from asl_utils import combine_sequences
 
-
 class ModelSelector(object):
     '''
     base class for model selection (strategy design pattern)
@@ -66,6 +65,8 @@ class SelectorBIC(ModelSelector):
 
     http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf
     Bayesian information criteria: BIC = -2 * logL + p * logN
+    N: number of word sequences
+    p: number of parameters (which is #states x 3 - escape_p, mean, variance)
     """
 
     def select(self):
@@ -77,7 +78,30 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        log_samples = math.log(len(self.X))
+        states = range(self.min_n_components, self.max_n_components+1)
+        models = []
+        logLs = []
+        for s in states:
+            try:
+                model = GaussianHMM(n_components=s, covariance_type='diag',
+                                    n_iter=1000, random_state=self.random_state,
+                                    verbose=False).fit(self.X, self.lengths)
+                models.append(model)
+            except:
+                models.append(None)
+            try:
+                logLs.append(model.score(self.X, self.lengths))
+            except:
+                logLs.append(float('-inf'))
+        logLs = np.array(logLs)
+        # Calculate the number of free parameters
+        # p = n_components**2 + 2 * len(self.X[0]) * n_components - 1
+        dimensions = len(self.X[0])
+        p = np.array([s**2 + 2*dimensions*s - 1 for s in states])
+        bics = - 2 * logLs + p * log_samples
+        best_bic_id = np.argmin(bics)
+        return models[best_bic_id]
 
 
 class SelectorDIC(ModelSelector):
@@ -93,7 +117,32 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        states = range(self.min_n_components, self.max_n_components+1)
+        models = []
+        logLs = []
+        rest_logLs = []
+        for s in states:
+            try:
+                model = GaussianHMM(n_components=s, covariance_type='diag',
+                                    n_iter=1000, random_state=self.random_state,
+                                    verbose=False).fit(self.X, self.lengths)
+            except:
+                model = None
+            models.append(model)
+            try:
+                logLs.append(model.score(self.X, self.lengths))
+                rest_logLs.append(sum([model.score(value[0], value[1]) / len(value[1])
+                                       for key, value in self.hwords.items()
+#                                       if key == 'CHOCOLATE']))                                       
+                                       if key != self.this_word]))
+            except:
+                logLs.append(float('-inf'))
+                rest_logLs.append(float('+inf'))
+        num_words = len(self.hwords) - 1
+        logLs = np.array(logLs) / len(self.lengths)
+        rest_logLs = np.array(rest_logLs)
+        result = logLs -  rest_logLs / num_words
+        return models[np.argmax(result)]
 
 
 class SelectorCV(ModelSelector):
@@ -105,4 +154,29 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        states = range(self.min_n_components, self.max_n_components+1)
+        num_samples = len(self.lengths)
+        if num_samples <= 1:
+            return self.base_model(3)
+        elif num_samples == 2:
+            num_folds = 2
+        else:
+            num_folds = 3
+        folds = KFold(n_splits=num_folds)
+        logLs = np.zeros([num_folds,
+                          self.max_n_components + 1 - self.min_n_components])
+        for fid, idx_pairs in enumerate(folds.split(self.lengths)):
+            train_idx, test_idx = idx_pairs
+            X_train, l_train = combine_sequences(train_idx, self.sequences)
+            X_test, l_test = combine_sequences(test_idx, self.sequences)
+            for sid, s in enumerate(states):
+                try:
+                    model = GaussianHMM(n_components=s, covariance_type='diag',
+                                        n_iter=1000, random_state=self.random_state,
+                                        verbose=False).fit(X_train, l_train)
+                    logLs[fid][sid] = model.score(X_test, l_test)
+                except:
+                    # return self.base_model(self.min_n_components)
+                    logLs[fid][sid] = float('-inf')
+        best_num_states = self.min_n_components + np.argmax(logLs.sum(axis=0))
+        return self.base_model(best_num_states)
