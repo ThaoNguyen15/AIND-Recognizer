@@ -34,4 +34,6 @@ def recognize(models: dict, test_set: SinglesData):
         probabilities.append(prob)
         guesses.append(max(prob, key=lambda x: prob[x]))
     return probabilities, guesses
-        
+
+def hmm_slm_combo(slm_weight, hmm_probabilities):
+    pass

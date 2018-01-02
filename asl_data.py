@@ -1,4 +1,5 @@
 import os
+import json
 
 import numpy as np
 import pandas as pd
@@ -266,6 +267,13 @@ class SinglesData(object):
         """
         return self._hmm_data[item]
 
+class slmData(object):
+    def __init__(self, data_file=os.path.join('data', 'slm.json')):
+        d = json.load(data_file)
+        self.unigrams = d['uni']
+        self.bigrams = d['bi']
+        self.trigrams = d['tri']
+                 
 
 def combine_sequences(sequences):
     '''
